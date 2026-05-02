@@ -9,3 +9,6 @@ plots/*.png
 dist/
 build/
 .env
+data/*.zip
+data/*.xls
+data/*.xlsx
