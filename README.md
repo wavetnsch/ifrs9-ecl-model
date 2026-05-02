@@ -1,6 +1,6 @@
 # IFRS 9 Expected Credit Loss (ECL) Model
 
-An end-to-end implementation of the IFRS 9 Expected Credit Loss (ECL) framework for a synthetic loan portfolio, built with Python. Designed to reflect real-world practices at commercial and development banks.
+An end-to-end implementation of the IFRS 9 Expected Credit Loss (ECL) framework built with Python, applied to the **Lending Club 2007–2011** loan dataset. Designed to reflect real-world practices at commercial and development banks.
 
 ## Overview
 
@@ -9,18 +9,33 @@ IFRS 9 (effective 1 January 2018) replaced the incurred loss model (IAS 39) with
 | Component | Description |
 |-----------|-------------|
 | **PD** | Probability of Default — 12-month and lifetime |
-| **LGD** | Loss Given Default — collateral-adjusted |
+| **LGD** | Loss Given Default — product-based with unsecured baseline |
 | **EAD** | Exposure at Default — outstanding + undrawn × CCF |
 
 $$ECL = PD \times LGD \times EAD \times \text{Discount Factor}$$
+
+## Dataset
+
+**Lending Club 2007–2011** — real peer-to-peer personal loan data
+
+| Field | Source | Notes |
+|-------|--------|-------|
+| Outstanding balance | `out_prncp` | Remaining principal |
+| Credit rating | `grade` (A–G → 1–7) | Origination rating |
+| Default flag | `loan_status` | Charged Off = default |
+| Days past due | `mths_since_last_delinq` | Proxy: 0 / 30 / 60 / 120 days |
+| Product type | `purpose` | Mapped to Term Loan / Revolving / Mortgage / Trade Finance |
+| Sector | `purpose` | Mapped to Financial / Real Estate / Trading / Services / Manufacturing |
+
+> **Note:** Lending Club loans are unsecured. Collateral value is set to 0 and the LTV-based SICR criterion is disabled. Staging is driven by DPD and credit rating changes only.
 
 ## IFRS 9 Stage Classification
 
 | Stage | Condition | ECL Horizon |
 |-------|-----------|-------------|
 | **Stage 1** | No significant increase in credit risk (SICR) | 12-month ECL |
-| **Stage 2** | SICR since origination (DPD ≥ 30, rating ↓ 2+ notches, LTV > 150%) | Lifetime ECL |
-| **Stage 3** | Credit-impaired (DPD ≥ 90, default) | Lifetime ECL |
+| **Stage 2** | SICR since origination (DPD ≥ 30 or rating ↓ 2+ notches) | Lifetime ECL |
+| **Stage 3** | Credit-impaired (DPD ≥ 90 or default) | Lifetime ECL |
 
 ## Methodology
 
@@ -40,10 +55,10 @@ $$\text{PD}_{\text{PiT}} = \text{PD}_{\text{TTC}} \times \text{Macro Scalar}$$
 
 $$ECL_{\text{weighted}} = 0.30 \times ECL_{\text{benign}} + 0.50 \times ECL_{\text{base}} + 0.20 \times ECL_{\text{adverse}}$$
 
-### LGD — Collateral Adjustment
-$$LGD = \frac{\max(0,\ EAD - \text{Collateral} \times (1 - \text{Haircut}))}{EAD}$$
+### LGD — Product-Based Unsecured Baseline
+$$LGD = 0.70 \times LGD_{\text{collateral}} + 0.30 \times LGD_{\text{base}}$$
 
-A 20% haircut accounts for collateral liquidation costs and time value.
+For unsecured loans, `collateral = 0`, so LGD approaches the product-based floor (45% for Term Loans).
 
 ### EAD — Credit Conversion Factor (CCF)
 $$EAD = \text{Outstanding Balance} + \text{Undrawn Commitment} \times CCF$$
@@ -61,7 +76,8 @@ $$EAD = \text{Outstanding Balance} + \text{Undrawn Commitment} \times CCF$$
 ```
 ifrs9-ecl-model/
 ├── src/
-│   ├── data_generator.py   # Synthetic loan portfolio generation
+│   ├── data_loader.py      # Lending Club data loading and IFRS 9 field mapping
+│   ├── data_generator.py   # Synthetic portfolio (fallback / unit testing)
 │   ├── staging.py          # IFRS 9 stage assignment (SICR logic)
 │   ├── pd_model.py         # PD model (12-month & lifetime, macro overlay)
 │   ├── lgd_ead.py          # LGD and EAD calculation
@@ -73,7 +89,7 @@ ifrs9-ecl-model/
 │   ├── 04_ecl_calculation.ipynb
 │   └── 05_sensitivity_analysis.ipynb
 ├── plots/                  # Generated visualizations
-├── data/                   # Data directory (populated at runtime)
+├── data/                   # Data directory (add dataset here — see below)
 └── requirements.txt
 ```
 
@@ -87,21 +103,27 @@ cd ifrs9-ecl-model
 # Install dependencies
 pip install -r requirements.txt
 
+# Download dataset from Kaggle
+pip install kaggle
+# Place kaggle.json at ~/.kaggle/kaggle.json first
+kaggle datasets download -d imsparsh/lending-club-loan-dataset-2007-2011 -p data/
+unzip data/lending-club-loan-dataset-2007-2011.zip -d data/
+
 # Run notebooks in order
 jupyter notebook notebooks/
 ```
 
-## Key Results (Synthetic Portfolio, n = 5,000 loans)
+## Key Results (Lending Club 2007–2011, n = 39,717 loans)
 
 | Metric | Value |
 |--------|-------|
-| Total EAD | ~THB 2.5B |
-| Stage 1 (%) | ~68% of balance |
-| Stage 2 (%) | ~22% of balance |
-| Stage 3 (%) | ~10% of balance |
-| Base ECL | ~THB 85M |
-| Coverage Ratio | ~3.4% |
-| Adverse Scenario ECL | ~+60% vs base |
+| Total Portfolio (USD) | ~$418M |
+| Default Rate | 14.2% |
+| Stage 1 (% of balance) | ~80% |
+| Stage 2 (% of balance) | ~4% |
+| Stage 3 (% of balance) | ~16% |
+| Base ECL | run notebooks |
+| Adverse Scenario ECL | run notebooks |
 
 ## Sensitivity Analysis
 
