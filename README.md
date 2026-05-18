@@ -1,144 +1,104 @@
 # IFRS 9 Expected Credit Loss (ECL) Model
 
-An end-to-end implementation of the IFRS 9 Expected Credit Loss (ECL) framework built with Python, applied to the **Lending Club 2007–2011** loan dataset. Designed to reflect real-world practices at commercial and development banks.
+An end-to-end implementation of the IFRS 9 Expected Credit Loss (ECL) framework built with Python, applied to the **Lending Club 2007–2020 Q3** dataset (2.9 million loans). Designed to reflect real-world practices at commercial and development banks.
+
+**Author:** Thanitsak Chuwittraimeta
+
+---
 
 ## Overview
 
-IFRS 9 (effective 1 January 2018) replaced the incurred loss model (IAS 39) with a forward-looking **expected credit loss** model. This project implements all three ECL components:
+IFRS 9 (effective 1 January 2018) replaced the incurred loss model (IAS 39) with a forward-looking **expected credit loss** model. This project implements the full ECL pipeline in a single self-contained notebook:
 
-| Component | Description |
-|-----------|-------------|
-| **PD** | Probability of Default — 12-month and lifetime |
-| **LGD** | Loss Given Default — product-based with unsecured baseline |
-| **EAD** | Exposure at Default — outstanding + undrawn × CCF |
+| Component | Approach |
+|-----------|----------|
+| **Stage Classification** | SICR-based (DPD + grade + DTI) |
+| **PD** | Logistic Regression with PIT macro overlay (FRED API) |
+| **Lifetime PD** | Vintage survival analysis |
+| **LGD** | Recovery-based, segment-level |
+| **EAD** | Annuity amortisation formula |
+| **ECL** | PD × LGD × EAD, probability-weighted across 3 scenarios |
 
-$$ECL = PD \times LGD \times EAD \times \text{Discount Factor}$$
+$$ECL = PD \times LGD \times EAD$$
+
+---
 
 ## Dataset
 
-**Lending Club 2007–2011** — real peer-to-peer personal loan data
+**Lending Club 2007–2020 Q3** — real peer-to-peer personal loan data (2.9M loans, 142 columns)
 
-| Field | Source | Notes |
-|-------|--------|-------|
-| Outstanding balance | `out_prncp` | Remaining principal |
-| Credit rating | `grade` (A–G → 1–7) | Origination rating |
-| Default flag | `loan_status` | Charged Off = default |
-| Days past due | `mths_since_last_delinq` | Proxy: 0 / 30 / 60 / 120 days |
-| Product type | `purpose` | Mapped to Term Loan / Revolving / Mortgage / Trade Finance |
-| Sector | `purpose` | Mapped to Financial / Real Estate / Trading / Services / Manufacturing |
+The notebook auto-detects the largest `.gzip` or `.csv` file in `data/`, so it works regardless of filename changes.
 
-> **Note:** Lending Club loans are unsecured. Collateral value is set to 0 and the LTV-based SICR criterion is disabled. Staging is driven by DPD and credit rating changes only.
+> Available on Kaggle: `imsparsh/lending-club-loan-dataset-2007-2020`
 
-## IFRS 9 Stage Classification
+---
+
+## IFRS 9 Stage Classification (SICR Logic)
 
 | Stage | Condition | ECL Horizon |
 |-------|-----------|-------------|
-| **Stage 1** | No significant increase in credit risk (SICR) | 12-month ECL |
-| **Stage 2** | SICR since origination (DPD ≥ 30 or rating ↓ 2+ notches) | Lifetime ECL |
-| **Stage 3** | Credit-impaired (DPD ≥ 90 or default) | Lifetime ECL |
+| **Stage 1** | Performing — no SICR | 12-month ECL |
+| **Stage 2** | SICR: DPD 31–120 days, Grade D–G (non-fully-paid), or DTI > 35% | Lifetime ECL |
+| **Stage 3** | Credit-impaired: DPD 120+, Default, or Charged Off | Lifetime ECL |
+
+---
 
 ## Methodology
 
-### PD Model — Survival Approach
-$$\text{Lifetime PD} = 1 - (1 - \text{Annual PD}_{\text{adj}})^{\text{Remaining Years}}$$
+### PD Model — Point-in-Time Logistic Regression
 
-With macroeconomic overlay:
-$$\text{PD}_{\text{PiT}} = \text{PD}_{\text{TTC}} \times \text{Macro Scalar}$$
+Trained on origination-time features only (zero lookahead bias):
+- Borrower features: FICO score, DTI, interest rate, annual income, revolving utilisation, open accounts, prior delinquencies
+- Macro features: GDP growth, unemployment rate, Treasury yield (via FRED API)
 
-### Probability-Weighted Scenarios (IFRS 9.B5.5.41)
+**AUC ~0.70 | KS > 0.30** — reasonable for origination-only features without behavioural data.
 
-| Scenario | Macro Scalar | Weight |
-|----------|-------------|--------|
-| Benign   | ×0.70       | 30%    |
-| Base     | ×1.00       | 50%    |
-| Adverse  | ×1.80       | 20%    |
+### Lifetime PD — Vintage Survival Analysis
 
-$$ECL_{\text{weighted}} = 0.30 \times ECL_{\text{benign}} + 0.50 \times ECL_{\text{base}} + 0.20 \times ECL_{\text{adverse}}$$
+Cumulative default rates by origination cohort and grade. Captures the seasoning effect (hazard peaks at 12–24 months, then declines as survivors demonstrate payment discipline).
 
-### LGD — Product-Based Unsecured Baseline
-$$LGD = 0.70 \times LGD_{\text{collateral}} + 0.30 \times LGD_{\text{base}}$$
+### Probability-Weighted Scenarios (IFRS 9 §5.5.17)
 
-For unsecured loans, `collateral = 0`, so LGD approaches the product-based floor (45% for Term Loans).
+| Scenario | PD Multiplier | Weight |
+|----------|--------------|--------|
+| Base     | ×1.0         | 40%    |
+| Adverse  | ×1.5         | 40%    |
+| Severe   | ×2.0         | 20%    |
 
-### EAD — Credit Conversion Factor (CCF)
-$$EAD = \text{Outstanding Balance} + \text{Undrawn Commitment} \times CCF$$
-
-| Product | CCF |
-|---------|-----|
-| Term Loan | 100% |
-| Revolving Credit | 75% |
-| Letter of Credit | 50% |
-| Trade Finance | 40% |
-| Mortgage | 100% |
+---
 
 ## Project Structure
 
 ```
 ifrs9-ecl-model/
-├── src/
-│   ├── data_loader.py      # Lending Club data loading and IFRS 9 field mapping
-│   ├── data_generator.py   # Synthetic portfolio (fallback / unit testing)
-│   ├── staging.py          # IFRS 9 stage assignment (SICR logic)
-│   ├── pd_model.py         # PD model (12-month & lifetime, macro overlay)
-│   ├── lgd_ead.py          # LGD and EAD calculation
-│   └── ecl_calculator.py   # ECL aggregation, scenarios, sensitivity
-├── notebooks/
-│   ├── 01_portfolio_overview.ipynb
-│   ├── 02_pd_model.ipynb
-│   ├── 03_lgd_ead_model.ipynb
-│   ├── 04_ecl_calculation.ipynb
-│   └── 05_sensitivity_analysis.ipynb
-├── plots/                  # Generated visualizations
-├── data/                   # Data directory (add dataset here — see below)
+├── ifrs9_ecl_model_api.ipynb   ← main notebook (all sections)
+├── data/                        ← place dataset here (not tracked)
+├── plots/                       ← generated visualisations (not tracked)
 └── requirements.txt
 ```
+
+---
 
 ## Getting Started
 
 ```bash
-# Clone the repository
 git clone https://github.com/wavetnsch/ifrs9-ecl-model.git
 cd ifrs9-ecl-model
 
-# Install dependencies
 pip install -r requirements.txt
 
 # Download dataset from Kaggle
 pip install kaggle
 # Place kaggle.json at ~/.kaggle/kaggle.json first
-kaggle datasets download -d imsparsh/lending-club-loan-dataset-2007-2011 -p data/
-unzip data/lending-club-loan-dataset-2007-2011.zip -d data/
+kaggle datasets download -d imsparsh/lending-club-loan-dataset-2007-2020 -p data/
 
-# Run notebooks in order
-jupyter notebook notebooks/
+# Open the notebook
+jupyter notebook ifrs9_ecl_model_api.ipynb
 ```
 
-## Key Results (Lending Club 2007–2011, n = 39,717 loans)
+**Optional:** Set `FRED_API_KEY` in a `.env` file for macro data via the FRED API. The notebook falls back to public CSV endpoints if no key is provided.
 
-| Metric | Value |
-|--------|-------|
-| Total Portfolio (USD) | ~$418M |
-| Default Rate | 14.2% |
-| Stage 1 (% of balance) | ~80% |
-| Stage 2 (% of balance) | ~4% |
-| Stage 3 (% of balance) | ~16% |
-| Base ECL | run notebooks |
-| Adverse Scenario ECL | run notebooks |
-
-## Sensitivity Analysis
-
-The model supports:
-- **PD shocks** (−50% to +100%)
-- **LGD shocks** (−20% to +20%)
-- **Combined stress scenarios** (Mild / Moderate / Severe / Extreme)
-- **Stage migration simulation** (Stage 1 → 2, Stage 2 → 3)
-
-## Technical Stack
-
-- **Python 3.10+**
-- **pandas / numpy** — data manipulation and numerical computation
-- **scikit-learn** — preprocessing utilities
-- **matplotlib / seaborn** — visualization
+---
 
 ## References
 

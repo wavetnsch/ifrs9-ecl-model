@@ -4,6 +4,8 @@ __pycache__/
 .ipynb_checkpoints/
 data/*.csv
 data/*.parquet
+data/*.gzip
+data/*.pkl
 plots/*.png
 *.egg-info/
 dist/
@@ -14,3 +16,5 @@ data/*.xls
 data/*.xlsx
 สรุปโปรเจค.md
 เรียนรู้.html
+notebook_comparison.md
+old_ver/
